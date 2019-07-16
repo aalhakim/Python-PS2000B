@@ -1,10 +1,11 @@
+#!python3
 import platform
 import time
 
 from pyps2000b import PS2000B
 
 
-DEVICE = "COM10" if platform.system() == "Windows" else "/dev/ttyACM0"
+DEVICE = "COM5" if platform.system() == "Windows" else "/dev/ttyACM0"
 
 # connection to the device is automatically opened
 print("Connecting to device at %s..." % DEVICE)

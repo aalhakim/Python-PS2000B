@@ -66,15 +66,23 @@ class Constants:
 
 # noinspection PyClassHasNoInit
 class Objects:
-    """Supported objects ids / commands"""
+    """Supported objects ids / commands
+
+    See "Objects List" document from product page.
+    """
     DEVICE_TYPE = 0
     DEVICE_SERIAL_NO = 1
     NOMINAL_VOLTAGE = 2
     NOMINAL_CURRENT = 3
     NOMINAL_POWER = 4
+
     DEVICE_ARTICLE_NO = 6
     MANUFACTURER = 8
     SOFTWARE_VERSION = 9
+
+    SET_VALUE_U = 50
+    SET_VALUE_I = 51
+
     POWER_SUPPLY_CONTROL = 54
     STATUS_ACTUAL_VALUES = 71
 
@@ -85,9 +93,10 @@ class ControlParameters:
     SWITCH_MODE_CMD = 0x10
     SWITCH_MODE_REMOTE = 0x10
     SWITCH_MODE_MANUAL = 0x00
-    SWITCH_POWER_OUTPUT_CMD = 0x1
-    SWITCH_POWER_OUTPUT_ON = 0x1
-    SWITCH_POWER_OUTPUT_OFF = 0x0
+
+    SWITCH_POWER_OUTPUT_CMD = 0x01
+    SWITCH_POWER_OUTPUT_ON = 0x01
+    SWITCH_POWER_OUTPUT_OFF = 0x00
 
 
 class Telegram:
@@ -205,11 +214,13 @@ class PS2000B:
 
     def __init__(self, serial_port):
         self.__device_status_information = None
-        self.__serial = serial.Serial(serial_port,
-                                      baudrate=Constants.CONNECTION_BAUD_RATE,
-                                      timeout=Constants.TIMEOUT_BETWEEN_COMMANDS * 2,
-                                      parity=serial.PARITY_ODD,
-                                      stopbits=Constants.CONNECTION_STOP_BITS)
+        self.__serial = serial.Serial(
+            serial_port,
+            baudrate=Constants.CONNECTION_BAUD_RATE,
+            timeout=Constants.TIMEOUT_BETWEEN_COMMANDS * 2,
+            parity=serial.PARITY_ODD,
+            stopbits=Constants.CONNECTION_STOP_BITS
+        )
 
         self.__device_information = self.__read_device_information()
 
@@ -235,6 +246,7 @@ class PS2000B:
         return result
 
     def __read_device_data(self, expected_length, object_id):
+        # 0b01 = Query Data (Transmission type)
         telegram = ToPowerSupply(0b01, [Constants.DEVICE_NODE, object_id], expected_length)
         result = self.__send_and_receive(telegram.get_byte_array())
         return result
@@ -252,27 +264,48 @@ class PS2000B:
         return self.__device_status_information
 
     def update_device_information(self):
+        # 0b01 = Query Data (Transmission type)
         telegram = ToPowerSupply(0b01, [Constants.DEVICE_NODE, Objects.STATUS_ACTUAL_VALUES], 6)
         device_information = self.__send_and_receive(telegram.get_byte_array())
         self.__device_status_information = DeviceStatusInformation(device_information.get_data())
 
     def __send_device_control(self, p1, p2):
+        # 0b11 = Send Data (Transmission type)
         telegram = ToPowerSupply(0b11, [Constants.DEVICE_NODE, Objects.POWER_SUPPLY_CONTROL, p1, p2], 2)
         _ = self.__send_and_receive(telegram.get_byte_array())
         self.update_device_information()
 
+    def __send_set_value(self, value_type, value):
+        # 0b11 = Send Data (Transmission type)
+        value_type = value_type.lower()
+        if value_type == "v" or value_type == "u":
+            object_id = Objects.SET_VALUE_U
+        elif value_type == "i":
+            object_id = Objects.SET_VALUE_I
+        else:
+            raise RuntimeError
+
+        p1 = (0xFF00 & value) >> 8
+        p2 =  0x00FF & value
+        telegram = ToPowerSupply(0b11, [Constants.DEVICE_NODE, object_id, p1, p2], 2)
+        _ = self.__send_and_receive(telegram.get_byte_array())
+        self.update_device_information()
+
+    #-------------------------------------------------------------------
     def enable_remote_control(self):
         self.__send_device_control(ControlParameters.SWITCH_MODE_CMD, ControlParameters.SWITCH_MODE_REMOTE)
 
     def disable_remote_control(self):
         self.__send_device_control(ControlParameters.SWITCH_MODE_CMD, ControlParameters.SWITCH_MODE_MANUAL)
 
+    #-------------------------------------------------------------------
     def enable_output(self):
         self.__send_device_control(ControlParameters.SWITCH_POWER_OUTPUT_CMD, ControlParameters.SWITCH_POWER_OUTPUT_ON)
 
     def disable_output(self):
         self.__send_device_control(ControlParameters.SWITCH_POWER_OUTPUT_CMD, ControlParameters.SWITCH_POWER_OUTPUT_OFF)
 
+    #-------------------------------------------------------------------
     def get_voltage(self):
         self.update_device_information()
         voltage = self.__device_information.nominal_voltage * self.__device_status_information.actual_voltage_percent
@@ -282,3 +315,12 @@ class PS2000B:
         self.update_device_information()
         current = self.__device_information.nominal_current * self.__device_status_information.actual_current_percent
         return current / 100
+
+    #-------------------------------------------------------------------
+    def set_voltage(self, x):
+        new_value_pct = int((100 * 256 * x / self.__device_information.nominal_voltage) + 0.5)
+        self.__send_set_value("v", new_value_pct)
+
+    def set_current(self, x):
+        new_value_pct = int((100 * 256 * x / self.__device_information.nominal_current) + 0.5)
+        self.__send_set_value("i", new_value_pct)
